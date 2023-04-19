@@ -23,8 +23,16 @@ for i, url in enumerate(url_list):
     print(f'🐝 Working on {title}...')
 
     individual_roundup_ws = individual_roundup_sh.worksheet('listings')
+    
+    nav_roundup_ws = individual_roundup_sh.worksheet('nav')
+    nav_roundup_df = pd.DataFrame(nav_roundup_ws.get_all_records())
+    # Drop the first column of the nav_roundup_df
+    nav_roundup_df = nav_roundup_df.drop(columns=['Display_Name', 'Location'])
 
     df = pd.DataFrame(individual_roundup_ws.get_all_records())
+
+    # Join the nav_roundup_df to the df on the Listing_Id column
+    df = df.merge(nav_roundup_df, on='Listing_Id', how='left')
 
     # If the value in the "Display_Name" column is "", then drop the row
     df = df[df['Display_Name'] != '']
@@ -39,10 +47,7 @@ for i, url in enumerate(url_list):
     df['Review roundup'] = title
 
     # Add a column that contains the URL of the spreadsheet
-    df['URL'] = url
-
-    # Concatenate the individual dataframes into one big dataframe
-    central_df = pd.concat([central_df, df])
+    df['C2P_Sheet'] = url
 
     story_settings_ws = individual_roundup_sh.worksheet('story_settings')
 
@@ -52,8 +57,18 @@ for i, url in enumerate(url_list):
     # Get the value of the cell in the row below the key
     publish_date = story_settings_ws.cell(2, publish_date_index).value
 
+    slug_index = story_settings_ws.find('Slug').col
+    year_index = story_settings_ws.find('Year').col
+    df['C2P_Live_Link'] = f'https://www.sfchronicle.com/{story_settings_ws.cell(2, year_index).value}/{story_settings_ws.cell(2, slug_index).value}'
+
     # In the roundup_ws, update the cell in the "Last updated" column that corresponds to the URL with the publish_date
     roundup_ws.update_cell(i + 2, 3, publish_date)
+
+    # Concatenate the individual dataframes into one big dataframe
+    central_df = pd.concat([central_df, df])
+
+# Sort the dataframe by the "Display_Name" column in ascending order
+central_df = central_df.sort_values(by=['Display_Name'], ascending=True)
 
 # Write the central dataframe to the 'SF DB' worksheet
 central_ws = sh.worksheet('SF DB')
