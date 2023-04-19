@@ -1,12 +1,33 @@
+import re
+
 import gspread as gs
 import pandas as pd
+
+market_info = {
+    'San Francisco': {
+        'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0',
+        'Directory worksheet': 'SFC directory',
+        'Database worksheet': 'SFC DB'
+    },
+    'San Antonio': {
+        'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/14x5hCAtOqDyTuxgqe01jisuHOwzmqRnfQBXifB8zWLc/edit#gid=2043417163',
+        'Directory worksheet': 'SAEN directory',
+        'Database worksheet': 'SAEN DB'
+    }
+}
 
 # We authenticate with Google using the service account json we created earlier.
 gc = gs.service_account(filename='service_account.json')
 
+# Loop through the market_info dictionary
+for market, info in market_info.items():
+    # Print the print the market name and its corresponding Google spreadsheet URL
+    print(f'🏙️ Working on {market}!')
+    print(f'🐝 Google spreadsheet: {info["Google spreadsheet"]}')
+
 sh = gc.open_by_url('https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0')
 
-roundup_ws = sh.worksheet('SF roundups')
+roundup_ws = sh.worksheet('SFC directory')
 
 roundup_df = pd.DataFrame(roundup_ws.get_all_records())
 
@@ -49,6 +70,13 @@ for i, url in enumerate(url_list):
     # Add a column that contains the URL of the spreadsheet
     df['C2P_Sheet'] = url
 
+    # convert the "Text" column to a list and print it
+    # text_list = df['Text'].tolist()
+    # print(text_list)
+
+    # Using the re.sub() function, replace the HTML tags with nothing
+    df['Plain_Text'] = df['Text'].apply(lambda x: re.sub('<[^<]+?>', '', x))
+
     story_settings_ws = individual_roundup_sh.worksheet('story_settings')
 
     # Search for the column of the appearance of the key: Publish_Date
@@ -71,7 +99,7 @@ for i, url in enumerate(url_list):
 central_df = central_df.sort_values(by=['Display_Name'], ascending=True)
 
 # Write the central dataframe to the 'SF DB' worksheet
-central_ws = sh.worksheet('SF DB')
+central_ws = sh.worksheet('SFC DB')
 
 # Replace the existing worksheet with the data in the dataframe
 central_ws.clear()
