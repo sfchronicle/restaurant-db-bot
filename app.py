@@ -3,6 +3,7 @@ import time
 
 import gspread as gs
 import pandas as pd
+from gspread_dataframe import set_with_dataframe
 
 market_info = {
     'San Francisco': {
@@ -50,18 +51,43 @@ def update_restaurant_db(info):
     for i, url in enumerate(directory_url_list):
         restaurant_guide_spreadsheet = api_call_handler(lambda: gc.open_by_url(url))
 
+        spreadsheet_values = restaurant_guide_spreadsheet.values_batch_get(
+                # The range of cells we want to get
+                ranges=['listings!A1:Z1000', 'nav!A1:Z1000', 'story_settings!A1:Z1000']
+        )
+
+        spreadsheet_dict = spreadsheet_values['valueRanges']
+
+        # Create an empty dataframe titled restaurant_listings_df
+        restaurant_listings_df = pd.DataFrame()
+
+        # Create an empty dataframe titled restaurant_nav_df
+        restaurant_nav_df = pd.DataFrame()
+
+        # Loop through the worksheets in the spreadsheet_dict. Add the values to the appropriate dataframe
+        for n, worksheet in enumerate(spreadsheet_dict):
+            # The first worksheet is the listings worksheet
+            if n == 0:
+                restaurant_listings_df = pd.DataFrame(worksheet['values'])
+                # Make the first row the header
+                restaurant_listings_df.columns = restaurant_listings_df.iloc[0]
+            # The second worksheet is the nav worksheet
+            elif n == 1:
+                restaurant_nav_df = pd.DataFrame(worksheet['values'])
+                # Make the first row the header
+                restaurant_nav_df.columns = restaurant_nav_df.iloc[0]
+            # The third worksheet is the story_settings worksheet
+            elif n == 2:
+                story_settings_df = pd.DataFrame(worksheet['values'])
+                # Make the first row the header
+                story_settings_df.columns = story_settings_df.iloc[0]
+
         # Get the title of the spreadsheet
         title = title_list[i]
         print(f'🐝 Working on {title}...')
 
-        restaurant_listings_worksheet = api_call_handler(lambda: restaurant_guide_spreadsheet.worksheet('listings'))
-        
-        restaurant_nav_worksheet = restaurant_guide_spreadsheet.worksheet('nav')
-        restaurant_nav_df = pd.DataFrame(restaurant_nav_worksheet.get_all_records())
         # Drop the first column of the restaurant_nav_df
         restaurant_nav_df = restaurant_nav_df.drop(columns=['Display_Name', 'Location'])
-
-        restaurant_listings_df = pd.DataFrame(api_call_handler(lambda: restaurant_listings_worksheet.get_all_records()))
 
         # Join the restaurant_nav_df to the df on the Listing_Id column
         merged_df = restaurant_listings_df.merge(restaurant_nav_df, on='Listing_Id', how='left')
@@ -81,15 +107,11 @@ def update_restaurant_db(info):
         # Using the re.sub() function, replace the HTML tags with nothing
         merged_df['Plain_Text'] = merged_df['Text'].apply(lambda x: re.sub('<[^<]+?>', '', x))
 
-        story_settings_worksheet = restaurant_guide_spreadsheet.worksheet('story_settings')
-
-        story_settings_df = pd.DataFrame(story_settings_worksheet.get_all_records())
-
         # Search for the column index for the appearance of "LastModDate_C2P" in the header of story_settings_df
         LastModDate_index = story_settings_df.columns.get_loc('LastModDate_C2P')
 
         # Get the value of the cell in the row below the key
-        last_mod_date = story_settings_df.iloc[0, LastModDate_index]
+        last_mod_date = story_settings_df.iloc[1, LastModDate_index]
 
         last_updated_values.append(last_mod_date)
 
@@ -108,7 +130,7 @@ def update_restaurant_db(info):
         merged_df['C2P_Live_Link'] = f'https://www.sfchronicle.com/{year}/{slug}'
 
         # In the directory_ws, update the cell in the "Last updated" column that corresponds to the URL with the last_mod_date
-        directory_ws.update_cell(i + 2, 3, last_mod_date)
+        # directory_ws.update_cell(i + 2, 3, last_mod_date)
 
         # Concatenate the db_df and the merged_df
         db_df = pd.concat([db_df, merged_df])
@@ -130,7 +152,10 @@ def update_restaurant_db(info):
     print('📝 Writing to database worksheet...')
     db_worksheet = spreadsheet.worksheet(info['Database worksheet'])
     db_worksheet.clear()
-    db_worksheet.update([db_df.columns.values.tolist()] + db_df.values.tolist())
+    
+    # Update the values in db_worksheet with the values in db_df using the set_with_dataframe() method
+    # db_worksheet.set_with_dataframe(db_df, include_index=False, include_column_header=True)
+    set_with_dataframe(db_worksheet, db_df, include_index=False, include_column_header=True)
 
     print(f'🥳 {info["Database worksheet"]} has been updated!')
 
