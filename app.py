@@ -41,14 +41,17 @@ def update_restaurant_db(info):
 
     # Turn the "URL" column into a list
     directory_url_list = directory_df['URL'].tolist()
+    title_list = directory_df['Guide name'].tolist()
 
     db_df = pd.DataFrame()
+
+    last_updated_values = []
 
     for i, url in enumerate(directory_url_list):
         restaurant_guide_spreadsheet = api_call_handler(lambda: gc.open_by_url(url))
 
         # Get the title of the spreadsheet
-        title = restaurant_guide_spreadsheet.title
+        title = title_list[i]
         print(f'🐝 Working on {title}...')
 
         restaurant_listings_worksheet = api_call_handler(lambda: restaurant_guide_spreadsheet.worksheet('listings'))
@@ -88,6 +91,8 @@ def update_restaurant_db(info):
         # Get the value of the cell in the row below the key
         last_mod_date = story_settings_df.iloc[0, LastModDate_index]
 
+        last_updated_values.append(last_mod_date)
+
         # Search for the column index for the appearance of "Slug" in the header of story_settings_df
         slug_index = story_settings_df.columns.get_loc('Slug')
 
@@ -107,7 +112,13 @@ def update_restaurant_db(info):
 
         # Concatenate the db_df and the merged_df
         db_df = pd.concat([db_df, merged_df])
-        # time.sleep(10)
+        time.sleep(5)
+
+    # Using the last_updated_values list, batch update the "Last Updated" column in the directory worksheet. This is in column C.
+    directory_ws.batch_update([{
+        'range': f'C{i+2}:C{i+2}',
+        'values': [[last_updated_values[i]]]
+    } for i in range(0, len(last_updated_values))])
     
     # Sort the db_df by the "Display_Name" column
     db_df = db_df.sort_values(by=['Display_Name'])
