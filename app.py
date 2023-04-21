@@ -6,16 +6,23 @@ import pandas as pd
 from gspread_dataframe import set_with_dataframe
 
 # This is the dictionary that contains the information about each market's spreadsheet.
+# market_info = {
+#     'San Francisco': {
+#         'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0',
+#         'Directory worksheet': 'SFC directory',
+#         'Database worksheet': 'SFC DB'
+#     },
+#     'San Antonio': {
+#         'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/14x5hCAtOqDyTuxgqe01jisuHOwzmqRnfQBXifB8zWLc/edit#gid=2043417163',
+#         'Directory worksheet': 'SAEN directory',
+#         'Database worksheet': 'SAEN DB'
+#     }
+# }
 market_info = {
     'San Francisco': {
         'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0',
         'Directory worksheet': 'SFC directory',
         'Database worksheet': 'SFC DB'
-    },
-    'San Antonio': {
-        'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/14x5hCAtOqDyTuxgqe01jisuHOwzmqRnfQBXifB8zWLc/edit#gid=2043417163',
-        'Directory worksheet': 'SAEN directory',
-        'Database worksheet': 'SAEN DB'
     }
 }
 
@@ -32,10 +39,33 @@ def api_call_handler(func):
     print('🤬 Giving up...')
     raise SystemError
 
+# I need a function that finds all the guides in the directory that have been modified since the last time the script ran
+def find_modified_guides(market, directory_df, memory_df):
+    """
+    This function will find all the guides in the directory that have been modified since the last time the script ran.
+    """
+    memory_df['Guide id'] = memory_df['Guide name'] + memory_df['Last updated']
+    
+    # Create an empty dataframe called modified_guides to store the modified guides
+    modified_guides = pd.DataFrame(columns=['Guide name', 'URL', 'Last updated'])
+    modified_guide_ids = []
+
+    for i, row in directory_df.iterrows():
+        guide_id = f'{row["Guide name"]}{row["Last updated"]}'
+        if guide_id not in memory_df['Guide id'].values:
+            print(f'👀 {row["Guide name"]} has been modified! Updating database...')
+            # Concatenate the row to the modified_guides dataframe
+            modified_guides = pd.concat([modified_guides, pd.DataFrame(row).T], ignore_index=True)
+            modified_guide_ids.append(guide_id)
+    
+    modified_guides['Guide id'] = modified_guide_ids
+
+    return modified_guides, modified_guide_ids
+
 # We authenticate with Google using the service account json we created earlier.
 gc = gs.service_account(filename='service_account.json')
 
-def update_restaurant_db(info):
+def update_restaurant_db(market, info):
     """
     This function will update the restaurant database for the market specified in the info dictionary.
     """
@@ -49,11 +79,27 @@ def update_restaurant_db(info):
     # Here we convert the directory worksheet into a dataframe
     directory_df = pd.DataFrame(directory_ws.get_all_records())
 
-    # Turn the "URL" column into a list
-    directory_url_list = directory_df['URL'].tolist()
+    market = market.lower().replace(' ', '_')
+
+    # We need to find the guides that have been modified since the last time the script ran.
+    # First we need to get the memory dataframe
+    memory_df = pd.read_json(f'data/{market}_memory.json')
+
+    # Now we need to find the modified guides
+    modified_guides, modified_guide_ids = find_modified_guides(market, directory_df, memory_df)
 
     # Turn the "Guide name" column into a list
-    title_list = directory_df['Guide name'].tolist()
+    title_list = modified_guides['Guide name'].tolist()
+
+    # Turn the "URL" column into a list
+    directory_url_list = modified_guides['URL'].tolist()
+
+    # Turn the "Last updated" column into a list
+    last_updated_list = modified_guides['Last updated'].tolist()
+
+    # Drop the Last updated column
+    modified_guides = modified_guides.drop(columns=['Last updated'])
+
 
     # Create an empty dataframe titled db_df. This is what will hold all the data from the various guides.
     db_df = pd.DataFrame()
@@ -149,7 +195,19 @@ def update_restaurant_db(info):
         'range': f'C{i+2}:C{i+2}',
         'values': [[last_updated_values[i]]]
     } for i in range(0, len(last_updated_values))])
-    
+
+    # Convert the directory_ws to a dataframe
+    directory_df = pd.DataFrame(directory_ws.get_all_records())
+
+    # Drop the URL column from the directory_df
+    directory_df = directory_df.drop(columns=['URL'])
+
+    # Lowercase the market value and replace spaces with underscores
+    market = market.lower().replace(' ', '_')
+
+    # Write the directory_df to a json file. Make the current market the name of the file.
+    directory_df.to_json(f'data/{market}_memory.json', orient='records')
+
     # Sort the db_df by the "Display_Name" column
     db_df = db_df.sort_values(by=['Display_Name'])
 
@@ -170,7 +228,7 @@ def update_restaurant_db(info):
 for market, info in market_info.items():
     # Print the print the market name and its corresponding Google spreadsheet URL
     print(f'🏙️ Working on {market}!')
-    update_restaurant_db(info)
-    time.sleep(10)
+    update_restaurant_db(market, info)
+    # time.sleep(10)
 
 print('✅ All done!')
