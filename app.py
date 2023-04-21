@@ -57,6 +57,8 @@ def find_modified_guides(market, directory_df, memory_df):
             # Concatenate the row to the modified_guides dataframe
             modified_guides = pd.concat([modified_guides, pd.DataFrame(row).T], ignore_index=True)
             modified_guide_ids.append(guide_id)
+        else:
+            print(f'🥱 {row["Guide name"]} has NOT been modified.')
     
     modified_guides['Guide id'] = modified_guide_ids
 
@@ -79,6 +81,57 @@ def update_restaurant_db(market, info):
     # Here we convert the directory worksheet into a dataframe
     directory_df = pd.DataFrame(directory_ws.get_all_records())
 
+    guide_url_list = directory_df['URL'].tolist()
+
+    last_updated_values = []
+
+    # We need to loop through the guide URLs
+    for i, url in enumerate(guide_url_list):
+        # Open the spreadsheet. We use the api_call_handler() function to retry the api call if it fails.
+        restaurant_guide_spreadsheet = api_call_handler(lambda: gc.open_by_url(url))
+
+        # Here we're grabbing all the values from the listings, nav, and story_settings worksheets in one go. This is more efficient than grabbing the values one worksheet at a time.
+        spreadsheet_values = restaurant_guide_spreadsheet.values_batch_get(
+                # The range of cells we want to get. We go all the way to Z1000 to make sure we get all the data.
+                ranges=['listings!A1:Z1000', 'nav!A1:Z1000', 'story_settings!A1:Z1000']
+        )
+
+        # Get the values from the spreadsheet
+        spreadsheet_dict = spreadsheet_values['valueRanges']
+
+        # Loop through the worksheets in the spreadsheet_dict. Add the values to the appropriate dataframe
+        for n, worksheet in enumerate(spreadsheet_dict):
+            # The first worksheet is the listings worksheet
+            if n == 0:
+                restaurant_listings_df = pd.DataFrame(worksheet['values'])
+                # Make the first row the header
+                restaurant_listings_df.columns = restaurant_listings_df.iloc[0]
+            # The second worksheet is the nav worksheet
+            elif n == 1:
+                restaurant_nav_df = pd.DataFrame(worksheet['values'])
+                # Make the first row the header
+                restaurant_nav_df.columns = restaurant_nav_df.iloc[0]
+            # The third worksheet is the story_settings worksheet
+            elif n == 2:
+                story_settings_df = pd.DataFrame(worksheet['values'])
+                # Make the first row the header
+                story_settings_df.columns = story_settings_df.iloc[0]
+
+        # Search for the column index for the appearance of "LastModDate_C2P" in the header of story_settings_df
+        LastModDate_index = story_settings_df.columns.get_loc('LastModDate_C2P')
+
+        # Get the value of the cell in the row below the key
+        last_mod_date = story_settings_df.iloc[1, LastModDate_index]
+        last_updated_values.append(last_mod_date)
+
+    directory_ws.batch_update([{
+    'range': f'C{i+2}:C{i+2}',
+    'values': [[last_updated_values[i]]]
+} for i in range(0, len(last_updated_values))])
+    
+    # Convert the directory_ws to a dataframe
+    directory_df = pd.DataFrame(directory_ws.get_all_records())
+
     market = market.lower().replace(' ', '_')
 
     # We need to find the guides that have been modified since the last time the script ran.
@@ -89,14 +142,13 @@ def update_restaurant_db(market, info):
     modified_guides, modified_guide_ids = find_modified_guides(market, directory_df, memory_df)
 
     # Turn the "Guide name" column into a list
-    title_list = modified_guides['Guide name'].tolist()
+    modified_title_list = modified_guides['Guide name'].tolist()
 
     # Turn the "URL" column into a list
-    directory_url_list = modified_guides['URL'].tolist()
+    modified_url_list = modified_guides['URL'].tolist()
 
     # Drop the Last updated column
     # modified_guides = modified_guides.drop(columns=['Last updated'])
-
 
     # Create an empty dataframe titled db_df. This is what will hold all the data from the various guides.
     db_df = pd.DataFrame()
@@ -104,10 +156,10 @@ def update_restaurant_db(market, info):
     # This list will hold the last modified dates for each guide
     last_updated_values = []
 
-    # Loop through the URLs in the directory_url_list
-    for i, url in enumerate(directory_url_list):
+    # Loop through the URLs in the modified_url_list
+    for i, url in enumerate(modified_url_list):
         # Get the title of the spreadsheet
-        title = title_list[i]
+        title = modified_title_list[i]
         print(f'🐝 Working on {title}...')
 
         # Open the spreadsheet. We use the api_call_handler() function to retry the api call if it fails.
@@ -208,21 +260,27 @@ def update_restaurant_db(market, info):
     # Write the directory_df to a json file. Make the current market the name of the file.
     directory_df.to_json(f'data/{market}_memory.json', orient='records')
 
-    # Sort the db_df by the "Display_Name" column
-    db_df = db_df.sort_values(by=['Display_Name'])
+    # If db_df is empty, don't do anything
+    if db_df.empty:
+        print(f'🤷‍♂️ {market} hasn\'t modified anything. Skipping...')
+        pass
+    else:
 
-    # Drop duplicate rows based on the "Listing-Id" column
-    db_df = db_df.drop_duplicates(subset=['Listing_Id'])
+        # Sort the db_df by the "Display_Name" column
+        db_df = db_df.sort_values(by=['Display_Name'])
 
-    # Write the db_df to the database worksheet
-    print('📝 Writing to database worksheet...')
-    db_worksheet = spreadsheet.worksheet(info['Database worksheet'])
-    db_worksheet.clear()
-    
-    # Update the values in db_worksheet with the values in db_df using the set_with_dataframe() method
-    set_with_dataframe(db_worksheet, db_df, include_index=False, include_column_header=True)
+        # Drop duplicate rows based on the "Listing-Id" column
+        db_df = db_df.drop_duplicates(subset=['Listing_Id'])
 
-    print(f'🥳 {info["Database worksheet"]} has been updated!')
+        # Write the db_df to the database worksheet
+        print('📝 Writing to database worksheet...')
+        db_worksheet = spreadsheet.worksheet(info['Database worksheet'])
+        db_worksheet.clear()
+        
+        # Update the values in db_worksheet with the values in db_df using the set_with_dataframe() method
+        set_with_dataframe(db_worksheet, db_df, include_index=False, include_column_header=True)
+
+        print(f'🥳 {info["Database worksheet"]} has been updated!')
 
 # Loop through the market_info dictionary
 for market, info in market_info.items():
