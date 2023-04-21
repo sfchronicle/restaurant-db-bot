@@ -40,7 +40,7 @@ def api_call_handler(func):
     raise SystemError
 
 # I need a function that finds all the guides in the directory that have been modified since the last time the script ran
-def find_modified_guides(market, directory_df, memory_df):
+def find_modified_guides(market, directory_df, memory_df, database_df):
     """
     This function will find all the guides in the directory that have been modified since the last time the script ran.
     """
@@ -54,6 +54,14 @@ def find_modified_guides(market, directory_df, memory_df):
         guide_id = f'{row["Guide name"]}{row["Last updated"]}'
         if guide_id not in memory_df['Guide id'].values:
             print(f'👀 {row["Guide name"]} has been modified! Updating database...')
+
+            # Drop any row in the database_df that has the same guide id as the guide we're currently working on
+            print(f'🗑 Dropping {guide_id} from database...')
+            try:
+                database_df = database_df[database_df['Guide id'] != guide_id]
+            except KeyError:
+                pass
+
             # Concatenate the row to the modified_guides dataframe
             modified_guides = pd.concat([modified_guides, pd.DataFrame(row).T], ignore_index=True)
             modified_guide_ids.append(guide_id)
@@ -62,7 +70,7 @@ def find_modified_guides(market, directory_df, memory_df):
     
     modified_guides['Guide id'] = modified_guide_ids
 
-    return modified_guides, modified_guide_ids
+    return modified_guides, modified_guide_ids, database_df
 
 # We authenticate with Google using the service account json we created earlier.
 gc = gs.service_account(filename='service_account.json')
@@ -77,9 +85,13 @@ def update_restaurant_db(market, info):
     
     # Now we access the market's directory worksheet
     directory_ws = spreadsheet.worksheet(info['Directory worksheet'])
+    database_ws = spreadsheet.worksheet(info['Database worksheet'])
 
     # Here we convert the directory worksheet into a dataframe
     directory_df = pd.DataFrame(directory_ws.get_all_records())
+
+    # Here we convert the database worksheet into a dataframe
+    database_df = pd.DataFrame(database_ws.get_all_records())
 
     guide_url_list = directory_df['URL'].tolist()
 
@@ -139,7 +151,7 @@ def update_restaurant_db(market, info):
     memory_df = pd.read_json(f'data/{market}_memory.json')
 
     # Now we need to find the modified guides
-    modified_guides, modified_guide_ids = find_modified_guides(market, directory_df, memory_df)
+    modified_guides, modified_guide_ids, database_df = find_modified_guides(market, directory_df, memory_df, database_df)
 
     # Turn the "Guide name" column into a list
     modified_title_list = modified_guides['Guide name'].tolist()
@@ -202,7 +214,7 @@ def update_restaurant_db(market, info):
         merged_df = merged_df[merged_df['Display_Name'] != '']
 
         # Drop the first row, which is the header row
-        merged_df = merged_df.drop([0])
+        merged_df = merged_df.drop([1])
 
         # Add a column that contains the title of the spreadsheet
         merged_df['Review roundup'] = title
@@ -262,23 +274,34 @@ def update_restaurant_db(market, info):
 
     # If db_df is empty, don't do anything
     if db_df.empty:
-        print(f'🤷‍♂️ {market} hasn\'t modified anything. Skipping...')
+        print(f'🍿 {market} doesn\'t hasn\'t modified anything')
         pass
     else:
 
+        # Concatenante the db_df to the end of database_df
+        database_df = pd.concat([database_df, db_df])
+
         # Sort the db_df by the "Display_Name" column
-        db_df = db_df.sort_values(by=['Display_Name'])
+        database_df = database_df.sort_values(by=['Display_Name'])
 
         # Drop duplicate rows based on the "Listing-Id" column
-        db_df = db_df.drop_duplicates(subset=['Listing_Id'])
+        database_df = database_df.drop_duplicates(subset=['Listing_Id'])
+
+        # If a row has a value of "Display_Name" in the "Display_Name" column, drop the row
+        database_df = database_df[database_df['Display_Name'] != 'Display_Name']
+
+        # Create a new "Guide id" column in the directory_df that concatenates the "Guide" column and the "Last Updated" column
+        directory_df['Guide id'] = directory_df['Guide name'] + directory_df['Last updated']
+
+        # If a row in the database_df has a "Guide id" value that doesn't exist in the directory_df, drop the row
+        database_df = database_df[database_df['Guide id'].isin(directory_df['Guide id'])]
 
         # Write the db_df to the database worksheet
         print('📝 Writing to database worksheet...')
-        db_worksheet = spreadsheet.worksheet(info['Database worksheet'])
-        db_worksheet.clear()
+        database_ws.clear()
         
-        # Update the values in db_worksheet with the values in db_df using the set_with_dataframe() method
-        set_with_dataframe(db_worksheet, db_df, include_index=False, include_column_header=True)
+        # Update the values in database_ws with the values in db_df using the set_with_dataframe() method
+        set_with_dataframe(database_ws, database_df, include_index=False, include_column_header=True)
 
         print(f'🥳 {info["Database worksheet"]} has been updated!')
 
