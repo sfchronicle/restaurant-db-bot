@@ -94,11 +94,8 @@ def update_restaurant_db(market, info):
     # Turn the "URL" column into a list
     directory_url_list = modified_guides['URL'].tolist()
 
-    # Turn the "Last updated" column into a list
-    last_updated_list = modified_guides['Last updated'].tolist()
-
     # Drop the Last updated column
-    modified_guides = modified_guides.drop(columns=['Last updated'])
+    # modified_guides = modified_guides.drop(columns=['Last updated'])
 
 
     # Create an empty dataframe titled db_df. This is what will hold all the data from the various guides.
@@ -171,6 +168,9 @@ def update_restaurant_db(market, info):
         last_mod_date = story_settings_df.iloc[1, LastModDate_index]
 
         last_updated_values.append(last_mod_date)
+
+        # Add a column called "Guide id" that concatenates the guide name and the last modified date
+        merged_df['Guide id'] = title + last_mod_date
 
         # Search for the column index for the appearance of "Slug" in the header of story_settings_df
         slug_index = story_settings_df.columns.get_loc('Slug')
