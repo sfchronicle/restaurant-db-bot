@@ -5,6 +5,7 @@ import gspread as gs
 import pandas as pd
 from gspread_dataframe import set_with_dataframe
 
+# This is the dictionary that contains the information about each market's spreadsheet.
 market_info = {
     'San Francisco': {
         'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0',
@@ -18,6 +19,7 @@ market_info = {
     }
 }
 
+# This handy dandy function will retry the api call if it fails.
 def api_call_handler(func):
     # Number of retries
     for i in range(0,10):
@@ -34,35 +36,48 @@ def api_call_handler(func):
 gc = gs.service_account(filename='service_account.json')
 
 def update_restaurant_db(info):
+    """
+    This function will update the restaurant database for the market specified in the info dictionary.
+    """
+
+    # Open the market's spreadsheet
     spreadsheet = gc.open_by_url(info['Google spreadsheet'])
     
+    # Now we access the market's directory worksheet
     directory_ws = spreadsheet.worksheet(info['Directory worksheet'])
 
+    # Here we convert the directory worksheet into a dataframe
     directory_df = pd.DataFrame(directory_ws.get_all_records())
 
     # Turn the "URL" column into a list
     directory_url_list = directory_df['URL'].tolist()
+
+    # Turn the "Guide name" column into a list
     title_list = directory_df['Guide name'].tolist()
 
+    # Create an empty dataframe titled db_df. This is what will hold all the data from the various guides.
     db_df = pd.DataFrame()
 
+    # This list will hold the last modified dates for each guide
     last_updated_values = []
 
+    # Loop through the URLs in the directory_url_list
     for i, url in enumerate(directory_url_list):
+        # Get the title of the spreadsheet
+        title = title_list[i]
+        print(f'🐝 Working on {title}...')
+
+        # Open the spreadsheet. We use the api_call_handler() function to retry the api call if it fails.
         restaurant_guide_spreadsheet = api_call_handler(lambda: gc.open_by_url(url))
 
+        # Here we're grabbing all the values from the listings, nav, and story_settings worksheets in one go. This is more efficient than grabbing the values one worksheet at a time.
         spreadsheet_values = restaurant_guide_spreadsheet.values_batch_get(
-                # The range of cells we want to get
+                # The range of cells we want to get. We go all the way to Z1000 to make sure we get all the data.
                 ranges=['listings!A1:Z1000', 'nav!A1:Z1000', 'story_settings!A1:Z1000']
         )
 
+        # Get the values from the spreadsheet
         spreadsheet_dict = spreadsheet_values['valueRanges']
-
-        # Create an empty dataframe titled restaurant_listings_df
-        restaurant_listings_df = pd.DataFrame()
-
-        # Create an empty dataframe titled restaurant_nav_df
-        restaurant_nav_df = pd.DataFrame()
 
         # Loop through the worksheets in the spreadsheet_dict. Add the values to the appropriate dataframe
         for n, worksheet in enumerate(spreadsheet_dict):
@@ -81,10 +96,6 @@ def update_restaurant_db(info):
                 story_settings_df = pd.DataFrame(worksheet['values'])
                 # Make the first row the header
                 story_settings_df.columns = story_settings_df.iloc[0]
-
-        # Get the title of the spreadsheet
-        title = title_list[i]
-        print(f'🐝 Working on {title}...')
 
         # Drop the first column of the restaurant_nav_df
         restaurant_nav_df = restaurant_nav_df.drop(columns=['Display_Name', 'Location'])
@@ -129,9 +140,6 @@ def update_restaurant_db(info):
 
         merged_df['C2P_Live_Link'] = f'https://www.sfchronicle.com/{year}/{slug}'
 
-        # In the directory_ws, update the cell in the "Last updated" column that corresponds to the URL with the last_mod_date
-        # directory_ws.update_cell(i + 2, 3, last_mod_date)
-
         # Concatenate the db_df and the merged_df
         db_df = pd.concat([db_df, merged_df])
         time.sleep(5)
@@ -154,7 +162,6 @@ def update_restaurant_db(info):
     db_worksheet.clear()
     
     # Update the values in db_worksheet with the values in db_df using the set_with_dataframe() method
-    # db_worksheet.set_with_dataframe(db_df, include_index=False, include_column_header=True)
     set_with_dataframe(db_worksheet, db_df, include_index=False, include_column_header=True)
 
     print(f'🥳 {info["Database worksheet"]} has been updated!')
