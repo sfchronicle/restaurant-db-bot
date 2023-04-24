@@ -84,6 +84,9 @@ def open_market_spreadsheet(url, directory, db):
     return market_spreadsheet, market_directory_ws, market_database_ws, market_directory_df, market_database_df
 
 def open_guide_spreadsheet(url, name):
+    '''
+    This function opens the guide spreadsheet and returns the three dataframes.
+    '''
     # print('🍑 Opening guide spreadsheet...')
 
     # Open the guide spreadsheet
@@ -165,7 +168,7 @@ def process_market_directory(url, directory, db):
         # Print the names of the modified guides
         for index in modified_guide_indices:
             print(f'🚨 {market_directory_df.iloc[index]["Guide name"]} has been modified!')
-    # Else, print a message saying that no guides have been modified
+    # Else, print a message saying that no guides have been modified and return. This will end the function.
     else:
         print('👍 No guides have been modified.')
         return
