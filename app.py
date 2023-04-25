@@ -1,4 +1,5 @@
 import re
+import time
 
 import gspread as gs
 import pandas as pd
@@ -6,8 +7,120 @@ import requests
 from bs4 import BeautifulSoup
 from gspread_dataframe import set_with_dataframe
 
+market_info = {
+    'San Francisco': {
+        'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0',
+        'Directory worksheet': 'SFC directory',
+        'Database worksheet': 'SFC DB'
+    }
+}
+
 # We authenticate with Google using the service account json we created earlier.
 gc = gs.service_account(filename='service_account.json')
+
+# This handy dandy function will retry the api call if it fails.
+def api_call_handler(func):
+    # Number of retries
+    for i in range(0,10):
+        try:
+            return func()
+        except Exception as e:
+            print(f'🤦‍♂️ {e}')
+            print(f'🤷‍♂️ Retrying in {2 ** i} seconds...')
+            time.sleep(2 ** i)
+    print('🤬 Giving up...')
+    raise SystemError
+
+def process_market_directory(url, directory, db):
+    """
+    This function processes the market directory and updates the market database. It's the main function. It calls all the other necessary functions.
+    """
+    
+    # Open the main market_spreadsheet and store the worksheets and dataframes
+    market_spreadsheet, market_directory_ws, market_database_ws, market_directory_df, market_database_df = open_market_spreadsheet(url, directory, db)
+
+    updated_market_database_df = pd.DataFrame()
+
+    # Loop through each GUIDE in the market_directory_df
+    for index, row in market_directory_df.iterrows():
+        print(f'🥡 Working on {row["Guide name"]}...')
+        # Open the guide spreadsheet and store the worksheets and dataframes
+        restaurant_listings_df, restaurant_nav_df, story_settings_df = open_guide_spreadsheet(row['C2P Sheet URL'], row['Guide name'])
+
+        live_page_df = scrape_live_guide(row['Live URL'])
+
+        # Dedupe the restaurant_nav_df
+        restaurant_nav_df = restaurant_nav_df.drop_duplicates(subset=['Listing_Id'])
+
+        # Join the restaurant_nav_df to the live_page_df on the "Listing_Id" column. From the restaurant_nav_df, I only want the Lat and Lng columns.
+        live_page_df = live_page_df.join(restaurant_nav_df[['Listing_Id', 'Lat', 'Lng']].set_index('Listing_Id'), on='Listing_Id')
+
+        # Concateenate the live_page_df to the updated_market_database_df
+        updated_market_database_df = pd.concat([updated_market_database_df, live_page_df])
+
+    # Sort the updated_market_database_df by the Display_Name column
+    updated_market_database_df = updated_market_database_df.sort_values(by=['Display_Name'])
+
+    # Clear the market_database_ws
+    market_database_ws.clear()
+
+    set_with_dataframe(market_database_ws, updated_market_database_df)
+
+def open_market_spreadsheet(url, directory, db):
+    """
+    This function opens each market's main spreadsheet and returns the worksheets and dataframes.
+    """
+    print('📂 Opening market spreadsheet...')
+
+    # Open the main spreadsheet
+    market_spreadsheet = api_call_handler(lambda: gc.open_by_url(url))
+
+    # Open the directory and database worksheets contained in the main market_spreadsheet
+    market_directory_ws = api_call_handler(lambda: market_spreadsheet.worksheet(directory))
+    market_database_ws = api_call_handler(lambda: market_spreadsheet.worksheet(db))
+
+    # Store the directory and database worksheets in pandas dataframes
+    market_directory_df = api_call_handler(lambda: pd.DataFrame(market_directory_ws.get_all_records()))
+    market_database_df = api_call_handler(lambda: pd.DataFrame(market_database_ws.get_all_records()))
+
+    # Return the worksheets and dataframes
+    return market_spreadsheet, market_directory_ws, market_database_ws, market_directory_df, market_database_df
+
+def open_guide_spreadsheet(url, name):
+    '''
+    This function opens the guide spreadsheet and returns the three dataframes.
+    '''
+    # print('🍑 Opening guide spreadsheet...')
+
+    # Open the guide spreadsheet
+    guide_spreadsheet = api_call_handler(lambda: gc.open_by_url(url))
+
+    guide_worksheets = guide_spreadsheet.values_batch_get(
+        ranges=['listings!A1:Z1000', 'nav!A1:Z1000', 'story_settings!A1:Z1000']
+    )
+
+    guide_worksheets = guide_worksheets['valueRanges']
+    
+    # Loop through the worksheets in the spreadsheet_dict. Add the values to the appropriate dataframe
+    for n, worksheet in enumerate(guide_worksheets):
+        # The first worksheet is the listings worksheet
+        if n == 0:
+            restaurant_listings_df = pd.DataFrame(worksheet['values'])
+            # Make the first row the header
+            restaurant_listings_df.columns = restaurant_listings_df.iloc[0]
+        # The second worksheet is the nav worksheet
+        elif n == 1:
+            restaurant_nav_df = pd.DataFrame(worksheet['values'])
+            # Make the first row the header
+            restaurant_nav_df.columns = restaurant_nav_df.iloc[0]
+        # The third worksheet is the story_settings worksheet
+        elif n == 2:
+            story_settings_df = pd.DataFrame(worksheet['values'])
+            # Make the first row the header
+            story_settings_df.columns = story_settings_df.iloc[0]
+    
+    # Return the three dataframes
+    return restaurant_listings_df, restaurant_nav_df, story_settings_df
 
 def getSoup(url):
     page = requests.get(url) 
@@ -15,7 +128,6 @@ def getSoup(url):
     return soup
 
 def scrape_live_guide(url):
-    print('🐝 Scraping live guide...')
     soup = getSoup(url)
     
     places = soup.find_all('div', class_='place')
@@ -40,7 +152,11 @@ def scrape_live_guide(url):
                 alt_text_list.append(img['alt'])
 
                 # The credits are in a span with a class of image-gallery-description
-                credits = img.find_next('span', class_='image-gallery-description').text.strip()
+                credits = img.find_next('span', class_='image-gallery-description')
+                if credits:
+                    credits = credits.text.strip()
+                else:
+                    credits = ''
                 credits_list.append(credits)
 
         # Join the list of images into a string separated by semicolons.
@@ -123,11 +239,18 @@ def scrape_live_guide(url):
         # Get the ID of the current place div
         Listing_Id = place['id']
 
+        address = place.find('div', itemprop='address')
+        if address:
+            address = address.text.strip()
+        else:
+            address = 'Location varies'
+
         place_data.append({
-            'Display_Name': place.find('h2', class_='subhead-bold').text.strip(),
+            'Display_Name': place.find('h2').text.strip(),
             'Listing_Id': Listing_Id,
-            'Location': place.find('div', itemprop='address').text.strip(),
+            'Location': address,
             'Text_plain': place.find('div', itemprop='description').text.strip(),
+            'text_rich': place.find('div', itemprop='description').decode_contents().strip(),
             'Images': image_src,
             'Alt_Text': alt_text,
             'Credits': credits,
@@ -150,10 +273,17 @@ def scrape_live_guide(url):
     # Create a dataframe from the list of dictionaries.
     guide_df = pd.DataFrame(place_data)
 
-    print(guide_df.head())
+    return guide_df
 
-    print('🐝 Done scraping live guide.')
+url = 'https://www.sfchronicle.com/projects/best-sonoma-restaurants/'
 
-url = 'https://www.sfchronicle.com/projects/2023/best-sourdough-sf-bay-area/'
+# scrape_live_guide(url)
 
-scrape_live_guide(url)
+# Loop through the market_info dictionary
+for market, info in market_info.items():
+    # Print the print the market name and its corresponding Google spreadsheet URL
+    print(f'🏙️ Working on {market}!')
+    process_market_directory(info['Google spreadsheet'], info['Directory worksheet'], info['Database worksheet'])
+    # time.sleep(10)
+
+print('👍 Done!')
