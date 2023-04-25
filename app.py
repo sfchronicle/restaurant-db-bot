@@ -1,8 +1,10 @@
 import re
 import time
+from datetime import datetime, timedelta
 
 import gspread as gs
 import pandas as pd
+import pytz
 import requests
 from bs4 import BeautifulSoup
 from gspread_dataframe import set_with_dataframe
@@ -11,12 +13,26 @@ market_info = {
     'San Francisco': {
         'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0',
         'Directory worksheet': 'SFC directory',
-        'Database worksheet': 'SFC DB'
+        'Database worksheet': 'SFC DB',
+        'Metadata worksheet': 'SFC meta',
+        'timezone': 'US/Pacific'
     }
 }
 
 # We authenticate with Google using the service account json we created earlier.
 gc = gs.service_account(filename='service_account.json')
+
+def create_time_stamp(timezone):
+    # Save the current time as a string in the following format: YYYY-MM-DD
+    date = datetime.now(pytz.timezone(timezone)).strftime('%Y-%m-%d')
+
+    # Save the current time in 12-hour format as a string in the following format: HH:MM AM/PM
+    time = datetime.now(pytz.timezone(timezone)).strftime('%-I:%M %p')
+
+    # Find the time one hour from now
+    next_run = datetime.now(pytz.timezone(timezone)) + timedelta(hours=1)
+
+    return date, time, next_run
 
 # This handy dandy function will retry the api call if it fails.
 def api_call_handler(func):
@@ -31,13 +47,13 @@ def api_call_handler(func):
     print('🤬 Giving up...')
     raise SystemError
 
-def process_market_directory(url, directory, db):
+def process_market_directory(url, directory, db, timezone, metadata):
     """
     This function processes the market directory and updates the market database. It's the main function. It calls all the other necessary functions.
     """
     
     # Open the main market_spreadsheet and store the worksheets and dataframes
-    market_spreadsheet, market_directory_ws, market_database_ws, market_directory_df, market_database_df = open_market_spreadsheet(url, directory, db)
+    market_spreadsheet, market_directory_ws, market_database_ws, market_metadata_ws, market_directory_df, market_database_df, market_metadata_df = open_market_spreadsheet(url, directory, db, metadata)
 
     updated_market_database_df = pd.DataFrame()
 
@@ -47,7 +63,7 @@ def process_market_directory(url, directory, db):
         # Open the guide spreadsheet and store the worksheets and dataframes
         restaurant_listings_df, restaurant_nav_df, story_settings_df = open_guide_spreadsheet(row['C2P Sheet URL'], row['Guide name'])
 
-        live_page_df = scrape_live_guide(row['Live URL'])
+        live_page_df = scrape_live_guide(row['Live URL'], row['Guide name'], row['C2P Sheet URL'])
 
         # Dedupe the restaurant_nav_df
         restaurant_nav_df = restaurant_nav_df.drop_duplicates(subset=['Listing_Id'])
@@ -66,7 +82,27 @@ def process_market_directory(url, directory, db):
 
     set_with_dataframe(market_database_ws, updated_market_database_df)
 
-def open_market_spreadsheet(url, directory, db):
+    # Get the current time and date
+    date, time, next_run = create_time_stamp(timezone)
+
+    # Rewrite the above updates to be in one batch call
+    market_metadata_ws.batch_update([
+        {
+            'range': 'B1',
+            'values': [[date]]
+        },
+        {
+            'range': 'B2',
+            'values': [[time]]
+        },
+        {
+            'range': 'B3',
+            'values': [[next_run.strftime('%-I:%M %p')]]
+        }
+    ])
+
+
+def open_market_spreadsheet(url, directory, db, metadata):
     """
     This function opens each market's main spreadsheet and returns the worksheets and dataframes.
     """
@@ -78,13 +114,15 @@ def open_market_spreadsheet(url, directory, db):
     # Open the directory and database worksheets contained in the main market_spreadsheet
     market_directory_ws = api_call_handler(lambda: market_spreadsheet.worksheet(directory))
     market_database_ws = api_call_handler(lambda: market_spreadsheet.worksheet(db))
+    market_metadata_ws = api_call_handler(lambda: market_spreadsheet.worksheet(metadata))
 
     # Store the directory and database worksheets in pandas dataframes
     market_directory_df = api_call_handler(lambda: pd.DataFrame(market_directory_ws.get_all_records()))
     market_database_df = api_call_handler(lambda: pd.DataFrame(market_database_ws.get_all_records()))
+    market_metadata_df = api_call_handler(lambda: pd.DataFrame(market_metadata_ws.get_all_records()))
 
     # Return the worksheets and dataframes
-    return market_spreadsheet, market_directory_ws, market_database_ws, market_directory_df, market_database_df
+    return market_spreadsheet, market_directory_ws, market_database_ws, market_metadata_ws, market_directory_df, market_database_df, market_metadata_df
 
 def open_guide_spreadsheet(url, name):
     '''
@@ -127,7 +165,7 @@ def getSoup(url):
     soup = BeautifulSoup(page.content, 'html.parser')
     return soup
 
-def scrape_live_guide(url):
+def scrape_live_guide(url, guide_name, c2p_sheet_url):
     soup = getSoup(url)
     
     places = soup.find_all('div', class_='place')
@@ -149,7 +187,10 @@ def scrape_live_guide(url):
                 img_src_list.append(wcm_id)
 
                 # The alt text is in the alt attribute.
-                alt_text_list.append(img['alt'])
+                if img['alt']:
+                    alt_text_list.append(img['alt'])
+                else:
+                    alt_text_list.append('')
 
                 # The credits are in a span with a class of image-gallery-description
                 credits = img.find_next('span', class_='image-gallery-description')
@@ -164,6 +205,8 @@ def scrape_live_guide(url):
 
         # Join the list of alt text into a string separated by semicolons.
         alt_text = '; '.join(alt_text_list)
+        if alt_text == '; ; ':
+            alt_text = None
 
         # Join the list of credits into a string separated by semicolons.
         credits = '; '.join(credits_list)
@@ -267,7 +310,10 @@ def scrape_live_guide(url):
             'Website': website,
             'Order online': order_online,
             'Related story': more_coverage,
-            'Review link': read_the_full_review
+            'Review link': read_the_full_review,
+            'Guide name': guide_name,
+            'Live URL': url,
+            'C2P Sheet URL': c2p_sheet_url,
         })
 
     # Create a dataframe from the list of dictionaries.
@@ -275,15 +321,11 @@ def scrape_live_guide(url):
 
     return guide_df
 
-url = 'https://www.sfchronicle.com/projects/best-sonoma-restaurants/'
-
-# scrape_live_guide(url)
-
 # Loop through the market_info dictionary
 for market, info in market_info.items():
     # Print the print the market name and its corresponding Google spreadsheet URL
     print(f'🏙️ Working on {market}!')
-    process_market_directory(info['Google spreadsheet'], info['Directory worksheet'], info['Database worksheet'])
+    process_market_directory(info['Google spreadsheet'], info['Directory worksheet'], info['Database worksheet'], info['timezone'], info['Metadata worksheet'])
     # time.sleep(10)
 
 print('👍 Done!')
