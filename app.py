@@ -1,3 +1,4 @@
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -9,6 +10,16 @@ import requests
 from bs4 import BeautifulSoup
 from gspread_dataframe import set_with_dataframe
 
+# We grab our service account from a Github secret
+SERVICE_ACCOUNT = os.environ.get('SERVICE_ACCOUNT')
+
+# Create a temporary json file based on the SERVICE_ACCOUNT env variable
+with open('service_account.json', 'w') as f:
+    f.write(SERVICE_ACCOUNT)
+
+# We authenticate with Google using the service account json we created earlier.
+gc = gs.service_account(filename='service_account.json')
+
 market_info = {
     'San Francisco': {
         'Google spreadsheet': 'https://docs.google.com/spreadsheets/d/1_ZMnD69rrVH53194HWHUoHfKnK0yq5gJ6J83dGWle5E/edit#gid=0',
@@ -19,10 +30,10 @@ market_info = {
     }
 }
 
-# We authenticate with Google using the service account json we created earlier.
-gc = gs.service_account(filename='service_account.json')
-
 def create_time_stamp(timezone):
+    """
+    Simple function to create a time stamp for the metadata worksheet.
+    """
     # Save the current time as a string in the following format: YYYY-MM-DD
     date = datetime.now(pytz.timezone(timezone)).strftime('%Y-%m-%d')
 
@@ -34,8 +45,10 @@ def create_time_stamp(timezone):
 
     return date, time, next_run
 
-# This handy dandy function will retry the api call if it fails.
 def api_call_handler(func):
+    '''
+    This function will retry the api call if it fails.
+    '''
     # Number of retries
     for i in range(0,10):
         try:
@@ -161,11 +174,18 @@ def open_guide_spreadsheet(url, name):
     return restaurant_listings_df, restaurant_nav_df, story_settings_df
 
 def getSoup(url):
+    '''
+    This function returns the BeautifulSoup object for the given URL.
+    '''
     page = requests.get(url) 
     soup = BeautifulSoup(page.content, 'html.parser')
     return soup
 
 def scrape_live_guide(url, guide_name, c2p_sheet_url):
+    '''
+    This function scrapes the live guide and returns a dataframe with the scraped data.
+    '''
+
     soup = getSoup(url)
     
     places = soup.find_all('div', class_='place')
@@ -329,3 +349,6 @@ for market, info in market_info.items():
     # time.sleep(10)
 
 print('👍 Done!')
+
+# Remove the temporary json file. We don't anyone to see our service account credentials!
+os.remove('service_account.json')
