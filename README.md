@@ -1,3 +1,7 @@
 ![Restaurant DB bot banner](img/banner.png)
 
-Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Vulputate mi sit amet mauris. Donec ac odio tempor orci dapibus ultrices in iaculis nunc. Aliquam nulla facilisi cras fermentum odio eu feugiat pretium.
+Hey there 🤠.
+
+This Hearst Newspaper bot simply gathers up all the restaurant reviews our local newspapers have included in their guides over the years and slots them into a centralized database.
+
+It runs once an hour using Github Actions. End result is not public.
