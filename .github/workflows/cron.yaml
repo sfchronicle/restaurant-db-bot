@@ -2,6 +2,7 @@ name: restaurant-db-bot
 
 env:
   SERVICE_ACCOUNT: ${{ secrets.SERVICE_ACCOUNT }}
+  ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
 
 on:
   push:
