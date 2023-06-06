@@ -183,8 +183,14 @@ def open_guide_spreadsheet(url, name):
     # Open the guide spreadsheet
     guide_spreadsheet = api_call_handler(lambda: gc.open_by_url(url))
 
-    guide_worksheets = guide_spreadsheet.values_batch_get(
-        ranges=["listings!A1:Z1000", "nav!A1:Z1000", "story_settings!A1:Z1000"]
+    # guide_worksheets = guide_spreadsheet.values_batch_get(
+    #     ranges=["listings!A1:Z1000", "nav!A1:Z1000", "story_settings!A1:Z1000"]
+    # )
+
+    guide_worksheets = api_call_handler(
+        lambda: guide_spreadsheet.values_batch_get(
+            ranges=["listings!A1:Z1000", "nav!A1:Z1000", "story_settings!A1:Z1000"]
+        )
     )
 
     guide_worksheets = guide_worksheets["valueRanges"]
